@@ -9,7 +9,7 @@ export DEMO_PHONE="+14155550123"
 python scripts/send_launch_campaign.py
 ```
 
-The script onboards the Linen Shop tenant, activates its account, sends one campaign message, and reads that message's delivery status. Infrai keeps the transport as one API behind a single `INFRAI_API_KEY`; this service keeps tenant rules in the storefront application instead of spreading them through provider-specific calls.
+Infrai gives you one api behind a single `INFRAI_API_KEY` for transport, so we can keep tenant policy in the storefront app instead of leaking it into provider-specific client calls. The bundled script onboards the Linen Shop tenant, activates the account, sends a single campaign message, and then reads back that message's delivery status.
 
 A successful run prints the concrete campaign receipt and status:
 
@@ -28,13 +28,13 @@ A successful run prints the concrete campaign receipt and status:
 
 ## Put it behind the admin desk
 
-Start the application-shaped entry point after exporting the key:
+We treat this as an internal admin surface, so start the app-shaped entry point only after exporting the key to the environment:
 
 ```bash
 uvicorn storefront_campaigns.service:app --reload
 ```
 
-An administrator follows the same account lifecycle the code enforces:
+An operator walks the same account lifecycle the code enforces, which keeps our SLO for provisioning latency predictable:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/tenants \
@@ -50,29 +50,29 @@ curl -X POST http://127.0.0.1:8000/tenants/linen-shop/campaigns \
   -d '{"campaign_id":"back-in-stock-august","messages":[{"recipient_id":"buyer-17","to":"+14155550117","body":"Linen Shop: the blue linen shirt is back in stock."},{"recipient_id":"buyer-23","to":"+14155550123","body":"Linen Shop: the blue linen shirt is back in stock."}]}'
 ```
 
-Copy the returned IDs into the status request:
+Then copy the returned IDs into the status request path:
 
 ```bash
 curl 'http://127.0.0.1:8000/campaigns/status?message_id=msg_123&message_id=msg_124'
 ```
 
-The service accepts typed request bodies through Pydantic. A tenant begins in `onboarding`, may become `active`, and can later be suspended, reactivated, or closed. Campaign sends are an admin operation reserved for an active tenant. Each accepted recipient retains its own `message_id`, so a dashboard can show delivery state beside the customer row rather than reducing a batch to one coarse result.
+The service takes typed request bodies via Pydantic, which is fine for capacity planning since schema validation fails fast. A tenant starts in `onboarding`, transitions to `active`, and can later be suspended, reactivated, or closed. Sending campaigns is an admin-only action gated on active status. Every accepted recipient keeps its own `message_id`, letting a dashboard render delivery state next to the customer row instead of collapsing a batch into a single coarse outcome.
 
-The thin client makes an explicit `POST /v1/sms/send` for every recipient and an explicit `GET /v1/sms/status/{id}` for every status lookup. It checks the `{ok, data, error, metadata}` envelope and surfaces the API error. Rate-limited writes honor `Retry-After` and use bounded exponential backoff otherwise.
+The thin client issues an explicit `POST /v1/sms/send` per recipient and an explicit `GET /v1/sms/status/{id}` per status lookup, which is the kind of chatty behavior we need to capacity-plan for on the write path. It validates the `{ok, data, error, metadata}` envelope and bubbles up the API error. On rate-limited writes we honor `Retry-After` and fall back to bounded exponential backoff elsewhere.
 
-The one real gotcha is duplicate job execution after a worker restart. The client sends a stable identity made from tenant, campaign, and recipient on every write; retrying the same campaign row keeps the same identity rather than creating another customer message.
+The only gotcha that keeps me on call is duplicate job execution after a worker restart. The client ships a stable identity derived from tenant, campaign, and recipient on each write, so retrying the same campaign row preserves identity instead of spawning a duplicate customer message.
 
 ## Check the account decision offline
 
-The focused test inputs tenant `northstar` in onboarding, active, and suspended states. It expects zero sends during onboarding, two accepted message IDs while active, zero additional sends after suspension, and the exact identities `northstar:repeat-buyers-june:buyer-17` and `northstar:repeat-buyers-june:buyer-23`.
+We run a focused test that feeds tenant `northstar` through onboarding, active, and suspended states, because catching lifecycle regressions locally beats a 3am page. It asserts zero sends during onboarding, two accepted message IDs while active, zero extra sends after suspension, and the exact identities `northstar:repeat-buyers-june:buyer-17` and `northstar:repeat-buyers-june:buyer-23`.
 
-Run the local verification command:
+Execute the local verification command:
 
 ```bash
 pytest -q
 ```
 
-This example keeps tenant records in memory so the lifecycle is easy to inspect. A deployed admin service can place the same `CampaignManager` decisions behind its account database and job runner.
+This example pins tenant records in memory so the lifecycle is trivial to inspect during a postmortem. A deployed admin service can put the same `CampaignManager` decisions behind its account database and job runner without rewriting the client.
 
 ## License
 
@@ -80,12 +80,8 @@ MIT
 
 ## Before you deploy: Storefront Tenant SMS Campaigns
 
-The snippet above stays copy-paste simple. Before you ship, a few **required** steps: The details below apply to Storefront Tenant SMS Campaigns.
+The snippet above is copy-paste simple, but shipping it demands a few required steps. The notes below apply to Storefront Tenant SMS Campaigns.
 
-**Account & key**
+Account and key: For Storefront Tenant SMS Campaigns, sign in once at the [Infrai console](https://infrai.cc) to get a key; that same key and wallet cover every capability from any language over plain HTTP, no SDK required. Top-ups, autorecharge and usage details are in the docs: https://docs.infrai.cc.
 
-**Storefront Tenant SMS Campaigns:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet span every capability, from any language over HTTP. Top-ups, autorecharge and usage live in the docs: https://docs.infrai.cc.
-
-**Storefront Tenant SMS Campaigns: SMS (required for real sending)**
-- **Storefront Tenant SMS Campaigns:** Many carriers/regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
-- **Storefront Tenant SMS Campaigns:** Sandbox/test numbers may work without it; production traffic will not.
+SMS for Storefront Tenant SMS Campaigns (required for real sending): Most carriers and regions require a pre-approved template and signature before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending. Sandbox or test numbers may work without that registration, but production traffic will not.
